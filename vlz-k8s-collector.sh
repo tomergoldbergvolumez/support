@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="v2.1"
+VERSION="v2.2"
 COLLECTOR_LOG="cmd.log"
 
 # Define colors
@@ -226,6 +226,10 @@ collect_all_pods(){
     
 collect_generanl_cluster(){
     run api-resources.log kubectl api-resources
+    run get-pods.log kubectl get pods -A
+    run pv.log kubectl get pv
+    run pvc.log kubectl get pvc
+    run storageclass.log kubectl get storageclasses
     run get-vlz-csi-driver.log kubectl get all -n vlz-csi-driver
     run get-vlz-cert-manager.log kubectl get all -n vlz-cert-manager
     run get-nodes.log kubectl get nodes --show-labels
