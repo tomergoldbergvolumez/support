@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
 # quick_measure.sh
 # Quick single-region full-mesh latency measurement
-# Usage: ./quick_measure.sh <region> [ssh-key-path]
+# Usage: ./quick_measure.sh <region> <ssh-key-path>
 # Compatible with Bash 3.2+ (macOS default)
 
 set -e
 
-REGION=${1:-us-east-1}
-SSH_KEY=${2:-~/.ssh/aws-key.pem}
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <region> <ssh-key-path>"
+    echo "Example: $0 us-west-2 ~/.ssh/my-key.pem"
+    exit 1
+fi
+
+REGION=$1
+SSH_KEY=$2
 INSTANCE_TYPE="t3.micro"
 PING_COUNT=100
+
+if [ ! -f "$SSH_KEY" ]; then
+    echo "Error: SSH key not found: $SSH_KEY"
+    exit 1
+fi
 
 # Helper function to find index of a value in an array
 # Usage: idx=$(get_index "value" "${array[@]}")

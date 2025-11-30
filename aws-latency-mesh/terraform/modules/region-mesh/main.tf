@@ -14,6 +14,26 @@ variable "key_name" {
   type = string
 }
 
+variable "public_key" {
+  type    = string
+  default = ""
+}
+
+# Create key pair in this region if public_key is provided
+resource "aws_key_pair" "latency_test" {
+  count      = var.public_key != "" ? 1 : 0
+  key_name   = var.key_name
+  public_key = var.public_key
+
+  tags = {
+    Name = "${var.project_name}-key"
+  }
+}
+
+locals {
+  key_name = var.public_key != "" ? aws_key_pair.latency_test[0].key_name : var.key_name
+}
+
 variable "instance_type" {
   type    = string
   default = "t3.micro"
@@ -31,6 +51,24 @@ data "aws_availability_zones" "available" {
     name   = "opt-in-status"
     values = ["opt-in-not-required"]
   }
+}
+
+# Filter AZs that support the instance type
+data "aws_ec2_instance_type_offerings" "available" {
+  filter {
+    name   = "instance-type"
+    values = [var.instance_type]
+  }
+
+  location_type = "availability-zone-id"
+}
+
+locals {
+  # Only use AZs that support the instance type
+  supported_az_ids = toset([
+    for az_id in data.aws_availability_zones.available.zone_ids :
+    az_id if contains(data.aws_ec2_instance_type_offerings.available.locations, az_id)
+  ])
 }
 
 # Get current region
@@ -52,16 +90,68 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
-# VPC - use default VPC for simplicity
-data "aws_vpc" "default" {
-  default = true
+# VPC for latency testing
+resource "aws_vpc" "latency_test" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = {
+    Name = "${var.project_name}-vpc"
+  }
+}
+
+# Internet Gateway
+resource "aws_internet_gateway" "latency_test" {
+  vpc_id = aws_vpc.latency_test.id
+
+  tags = {
+    Name = "${var.project_name}-igw"
+  }
+}
+
+# Route table
+resource "aws_route_table" "latency_test" {
+  vpc_id = aws_vpc.latency_test.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.latency_test.id
+  }
+
+  tags = {
+    Name = "${var.project_name}-rt"
+  }
+}
+
+# Create a subnet per supported AZ
+resource "aws_subnet" "latency_test" {
+  for_each = local.supported_az_ids
+
+  vpc_id                  = aws_vpc.latency_test.id
+  cidr_block              = cidrsubnet("10.0.0.0/16", 8, index(tolist(local.supported_az_ids), each.key))
+  availability_zone       = [for az in data.aws_availability_zones.available.names : az if data.aws_availability_zones.available.zone_ids[index(data.aws_availability_zones.available.names, az)] == each.key][0]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name  = "${var.project_name}-subnet-${each.key}"
+    AZ_ID = each.key
+  }
+}
+
+# Associate subnets with route table
+resource "aws_route_table_association" "latency_test" {
+  for_each = aws_subnet.latency_test
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.latency_test.id
 }
 
 # Security group allowing ICMP and SSH
 resource "aws_security_group" "latency_test" {
   name        = "${var.project_name}-sg"
   description = "Security group for latency testing"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = aws_vpc.latency_test.id
 
   # SSH access
   ingress {
@@ -71,12 +161,28 @@ resource "aws_security_group" "latency_test" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # ICMP (ping)
+  # ICMP (ping) from anywhere
   ingress {
     from_port   = -1
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # ICMP from within the VPC (self-reference)
+  ingress {
+    from_port = -1
+    to_port   = -1
+    protocol  = "icmp"
+    self      = true
+  }
+
+  # All traffic within VPC
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   # iperf3 port
@@ -127,10 +233,10 @@ locals {
     
     # Parse results: rtt min/avg/max/mdev = 0.123/0.456/0.789/0.012 ms
     if [[ $PING_RESULT =~ ([0-9.]+)/([0-9.]+)/([0-9.]+)/([0-9.]+) ]]; then
-        MIN=${BASH_REMATCH[1]}
-        AVG=${BASH_REMATCH[2]}
-        MAX=${BASH_REMATCH[3]}
-        MDEV=${BASH_REMATCH[4]}
+        MIN=$${BASH_REMATCH[1]}
+        AVG=$${BASH_REMATCH[2]}
+        MAX=$${BASH_REMATCH[3]}
+        MDEV=$${BASH_REMATCH[4]}
     else
         MIN="N/A"
         AVG="N/A"
@@ -146,16 +252,16 @@ locals {
   EOF
 }
 
-# Deploy one instance per AZ
+# Deploy one instance per supported AZ
 resource "aws_instance" "latency_node" {
-  for_each = toset(data.aws_availability_zones.available.zone_ids)
+  for_each = local.supported_az_ids
 
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
-  key_name               = var.key_name
+  key_name               = local.key_name
   vpc_security_group_ids = [aws_security_group.latency_test.id]
-  availability_zone      = [for az in data.aws_availability_zones.available.names : az if data.aws_availability_zones.available.zone_ids[index(data.aws_availability_zones.available.names, az)] == each.key][0]
-  
+  subnet_id              = aws_subnet.latency_test[each.key].id
+
   user_data = local.user_data
 
   tags = {
@@ -184,5 +290,5 @@ output "region" {
 }
 
 output "az_count" {
-  value = length(data.aws_availability_zones.available.zone_ids)
+  value = length(local.supported_az_ids)
 }

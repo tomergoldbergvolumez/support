@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # measure_all_regions.sh
 # Run latency measurements across ALL AWS regions
-# Usage: ./measure_all_regions.sh [ssh-key-path]
+# Usage: ./measure_all_regions.sh <ssh-key-path>
 # Compatible with Bash 3.2+ (macOS default)
 
 set -e
 
-SSH_KEY=${1:-~/.ssh/aws-key.pem}
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <ssh-key-path>"
+    echo "Example: $0 ~/.ssh/my-key.pem"
+    exit 1
+fi
+
+SSH_KEY=$1
+
+if [ ! -f "$SSH_KEY" ]; then
+    echo "Error: SSH key not found: $SSH_KEY"
+    exit 1
+fi
 
 # Helper function to find index of a value in an array
 # Usage: idx=$(get_index "value" "${array[@]}")
