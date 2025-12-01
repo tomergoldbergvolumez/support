@@ -287,7 +287,7 @@ def main():
     # Generate markdown report
     report_file = output_dir / 'report.md'
     from generate_report import generate_report
-    generate_report(output_data, report_file)
+    generate_report(output_data, report_file, inventory=inventory)
 
     print(f"\n{'=' * 60}")
     print(f"Complete!")

@@ -18,8 +18,26 @@ def load_results(results_file):
         return json.load(f)
 
 
-def generate_report(results_data, output_file, verbose=False):
+def load_inventory(results_file):
+    """Load inventory from same directory as results file."""
+    inventory_file = Path(results_file).parent / 'inventory.json'
+    if inventory_file.exists():
+        with open(inventory_file, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def get_az_name(az_id, inventory):
+    """Get the actual AZ name (e.g., us-east-2a) from AZ ID (e.g., use2-az1)."""
+    if az_id in inventory:
+        return inventory[az_id].get('az_name', az_id)
+    return az_id
+
+
+def generate_report(results_data, output_file, verbose=False, inventory=None):
     """Generate markdown report from results."""
+    if inventory is None:
+        inventory = {}
 
     lines = []
 
@@ -65,8 +83,8 @@ def generate_report(results_data, output_file, verbose=False):
         lines.append("")
         lines.append("### Key Findings")
         lines.append("")
-        lines.append(f"- **Lowest latency:** {min_result[2]} -> {min_result[3]} ({min_result[0].upper()}/{min_result[1]}) = **{min_result[4]:.3f}ms**")
-        lines.append(f"- **Highest latency:** {max_result[2]} -> {max_result[3]} ({max_result[0].upper()}/{max_result[1]}) = **{max_result[4]:.3f}ms**")
+        lines.append(f"- **Lowest latency:** {get_az_name(min_result[2], inventory)} -> {get_az_name(min_result[3], inventory)} ({min_result[0].upper()}/{min_result[1]}) = **{min_result[4]:.3f}ms**")
+        lines.append(f"- **Highest latency:** {get_az_name(max_result[2], inventory)} -> {get_az_name(max_result[3], inventory)} ({max_result[0].upper()}/{max_result[1]}) = **{max_result[4]:.3f}ms**")
         lines.append(f"- **Average latency:** {avg_latency:.3f}ms")
         lines.append("")
     else:
@@ -93,7 +111,9 @@ def generate_report(results_data, output_file, verbose=False):
             lines.append("|-----------|-----------|----------|----------|----------|--------|")
 
             for r in region_results:
-                lines.append(f"| {r['source_az']} | {r['target_az']} | {r['min_ms']:.3f} | {r['avg_ms']:.3f} | {r['max_ms']:.3f} | {r.get('mdev_ms', 0):.3f} |")
+                src_name = get_az_name(r['source_az'], inventory)
+                dst_name = get_az_name(r['target_az'], inventory)
+                lines.append(f"| {src_name} | {dst_name} | {r['min_ms']:.3f} | {r['avg_ms']:.3f} | {r['max_ms']:.3f} | {r.get('mdev_ms', 0):.3f} |")
 
             lines.append("")
 
@@ -108,7 +128,7 @@ def generate_report(results_data, output_file, verbose=False):
         lines.append("| Cloud | Region | Source AZ | Target AZ | Avg (ms) |")
         lines.append("|-------|--------|-----------|-----------|----------|")
         for cloud, region, src, dst, lat in all_latencies[:10]:
-            lines.append(f"| {cloud.upper()} | {region} | {src} | {dst} | {lat:.3f} |")
+            lines.append(f"| {cloud.upper()} | {region} | {get_az_name(src, inventory)} | {get_az_name(dst, inventory)} | {lat:.3f} |")
         lines.append("")
 
         # Top 10 highest across all clouds
@@ -117,7 +137,7 @@ def generate_report(results_data, output_file, verbose=False):
         lines.append("| Cloud | Region | Source AZ | Target AZ | Avg (ms) |")
         lines.append("|-------|--------|-----------|-----------|----------|")
         for cloud, region, src, dst, lat in all_latencies[-10:][::-1]:
-            lines.append(f"| {cloud.upper()} | {region} | {src} | {dst} | {lat:.3f} |")
+            lines.append(f"| {cloud.upper()} | {region} | {get_az_name(src, inventory)} | {get_az_name(dst, inventory)} | {lat:.3f} |")
         lines.append("")
 
         # Per-cloud summary
@@ -187,8 +207,11 @@ def main():
     print(f"Loading results from {input_path}...")
     results_data = load_results(input_path)
 
+    print(f"Loading inventory...")
+    inventory = load_inventory(input_path)
+
     print(f"Generating report...")
-    generate_report(results_data, output_path, verbose=True)
+    generate_report(results_data, output_path, verbose=True, inventory=inventory)
 
 
 if __name__ == '__main__':

@@ -219,6 +219,16 @@ provider "aws" {
 provider "azurerm" {
   features {}
   skip_provider_registration = true
+
+  # When Azure is disabled, use dummy values to prevent authentication errors
+  # These fake credentials won't be used since no Azure resources are created
+  subscription_id = var.enable_azure ? null : "00000000-0000-0000-0000-000000000000"
+  tenant_id       = var.enable_azure ? null : "00000000-0000-0000-0000-000000000000"
+  client_id       = var.enable_azure ? null : "00000000-0000-0000-0000-000000000000"
+  client_secret   = var.enable_azure ? null : "disabled"
+  use_cli         = var.enable_azure
+  use_oidc        = false
+  use_msi         = false
 }
 
 # =============================================================================
