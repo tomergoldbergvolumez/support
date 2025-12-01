@@ -23,7 +23,7 @@ variable "zones" {
 variable "vm_size" {
   description = "Azure VM size"
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D2s_v3"  # D-series has highest availability across regions
 }
 
 variable "project_name" {
@@ -39,7 +39,7 @@ variable "admin_username" {
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key for VM access"
+  description = "SSH public key (from tls_private_key)"
   type        = string
 }
 
@@ -49,8 +49,9 @@ resource "azurerm_resource_group" "latency_test" {
   location = var.region
 
   tags = {
-    Project   = "azure-latency-measurement"
+    Project   = "latency-measurement"
     ManagedBy = "terraform"
+    Cloud     = "azure"
   }
 }
 
@@ -192,6 +193,7 @@ locals {
     package_update: true
     packages:
       - iperf3
+      - qperf
       - bind-utils
       - jq
 

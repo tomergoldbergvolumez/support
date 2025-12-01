@@ -3,13 +3,14 @@
 Orchestrates full-mesh latency measurements across AWS and Azure regions.
 
 Usage:
-    ./orchestrate.py                          # Uses Terraform in ../terraform
-    ./orchestrate.py --terraform-dir /path    # Custom Terraform directory
-    ./orchestrate.py --inventory inv.json     # Use existing inventory file
+    ./orchestrate.py --cloud aws                    # AWS only (uses terraform/aws)
+    ./orchestrate.py --cloud azure                  # Azure only (uses terraform/azure)
+    ./orchestrate.py --cloud aws --cloud azure      # Both clouds
+    ./orchestrate.py --inventory inv.json           # Use existing inventory file
 
 Environment variables:
-    SSH_KEY       - Path to SSH private key (required if --ssh-key not provided)
-    PING_COUNT    - Number of ping packets per measurement (default: 100)
+    SSH_KEY       - Path to SSH private key (optional if auto-detected from terraform)
+    TCP_DURATION  - Duration in seconds for TCP latency test (default: 5)
     PARALLEL_JOBS - Max parallel SSH connections (default: 10)
 """
 
@@ -17,6 +18,8 @@ import json
 import subprocess
 import os
 import sys
+import re
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,18 +32,49 @@ DEFAULT_SSH_USERS = {
 }
 
 
-def get_terraform_inventory(terraform_dir):
-    """Fetch instance inventory from Terraform output."""
+def get_terraform_inventory(terraform_dir, cloud=None):
+    """Fetch instance inventory from Terraform output.
+
+    Args:
+        terraform_dir: Base terraform directory
+        cloud: Optional cloud name (aws/azure) for subdirectory
+    """
+    if cloud:
+        tf_path = Path(terraform_dir) / cloud
+    else:
+        tf_path = Path(terraform_dir)
+
+    if not tf_path.exists():
+        return None, None, None
+
     try:
+        # Get instances
         result = subprocess.run(
-            ['terraform', f'-chdir={terraform_dir}', 'output', '-json', 'instances'],
+            ['terraform', f'-chdir={tf_path}', 'output', '-json', 'instances'],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            return None
-        return json.loads(result.stdout)
+            return None, None, None
+        instances = json.loads(result.stdout)
+
+        # Get SSH key
+        key_result = subprocess.run(
+            ['terraform', f'-chdir={tf_path}', 'output', '-raw', 'ssh_private_key'],
+            capture_output=True, text=True, timeout=30
+        )
+        ssh_key = key_result.stdout if key_result.returncode == 0 else None
+
+        # Get SSH user
+        user_result = subprocess.run(
+            ['terraform', f'-chdir={tf_path}', 'output', '-raw', 'ssh_user'],
+            capture_output=True, text=True, timeout=30
+        )
+        ssh_user = user_result.stdout.strip() if user_result.returncode == 0 else None
+
+        return instances, ssh_key, ssh_user
+
     except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
-        return None
+        return None, None, None
 
 
 def load_inventory(inventory_file):
@@ -57,10 +91,33 @@ def get_ssh_user(instance, override_user=None):
     return DEFAULT_SSH_USERS.get(cloud, 'ec2-user')
 
 
-def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override, ping_count):
-    """Run latency measurement from source to target instance."""
+def parse_qperf_output(output):
+    """Parse qperf tcp_lat output to extract latency statistics.
+
+    qperf output format:
+        tcp_lat:
+            latency  =  1.52 ms
+
+    For statistics we run multiple iterations and calculate min/avg/max/stddev.
+    """
+    latency_match = re.search(r'latency\s*=\s*([\d.]+)\s*(us|ms|s)', output)
+    if latency_match:
+        value = float(latency_match.group(1))
+        unit = latency_match.group(2)
+        # Convert to milliseconds
+        if unit == 'us':
+            value /= 1000
+        elif unit == 's':
+            value *= 1000
+        return value
+    return None
+
+
+def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override, tcp_duration):
+    """Run TCP latency measurement from source to target instance using qperf."""
     source_ip = source_instance['public_ip']
     target_ip = target_instance['private_ip']
+    target_public_ip = target_instance['public_ip']
     source_az = source_instance['az_id']
     target_az = target_instance['az_id']
     region = source_instance['region']
@@ -78,63 +135,88 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override
 
     # Get SSH user for this instance
     ssh_user = get_ssh_user(source_instance, ssh_user_override)
+    target_ssh_user = get_ssh_user(target_instance, ssh_user_override)
 
-    # Build SSH command
-    ssh_cmd = [
-        'ssh', '-i', ssh_key,
+    ssh_opts = [
         '-o', 'StrictHostKeyChecking=no',
         '-o', 'UserKnownHostsFile=/dev/null',
         '-o', 'ConnectTimeout=10',
-        '-o', 'LogLevel=ERROR',
-        f'{ssh_user}@{source_ip}',
-        f'ping -c {ping_count} -i 0.2 -q {target_ip}'
+        '-o', 'LogLevel=ERROR'
     ]
 
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
-        output = result.stdout
+        # Step 1: Start qperf server on target (in background, with timeout)
+        server_cmd = [
+            'ssh', '-i', ssh_key, *ssh_opts,
+            f'{target_ssh_user}@{target_public_ip}',
+            f'pkill -9 qperf 2>/dev/null; timeout {tcp_duration + 30} qperf &'
+        ]
+        subprocess.run(server_cmd, capture_output=True, timeout=15)
 
-        # Parse ping output
-        if 'rtt' in output:
-            # Extract stats line: rtt min/avg/max/mdev = 0.123/0.456/0.789/0.012 ms
-            for line in output.split('\n'):
-                if 'rtt' in line:
-                    stats = line.split('=')[1].strip().split('/')
-                    min_ms = float(stats[0])
-                    avg_ms = float(stats[1])
-                    max_ms = float(stats[2])
-                    mdev_ms = float(stats[3].replace(' ms', ''))
+        # Give server time to start
+        import time
+        time.sleep(1)
 
-                    # Extract packet loss
-                    loss_pct = 0
-                    for line2 in output.split('\n'):
-                        if 'packet loss' in line2:
-                            loss_pct = float(line2.split(',')[2].split('%')[0].strip())
+        # Step 2: Run multiple qperf measurements from source to get statistics
+        latencies = []
+        iterations = 5  # Run 5 measurements for statistics
 
-                    return {
-                        'type': 'result',
-                        'cloud': cloud,
-                        'region': region,
-                        'source_az': source_az,
-                        'target_az': target_az,
-                        'source_ip': source_ip,
-                        'target_ip': target_ip,
-                        'min_ms': min_ms,
-                        'avg_ms': avg_ms,
-                        'max_ms': max_ms,
-                        'mdev_ms': mdev_ms,
-                        'packet_loss_pct': loss_pct,
-                        'ping_count': ping_count,
-                        'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-                    }
+        for _ in range(iterations):
+            client_cmd = [
+                'ssh', '-i', ssh_key, *ssh_opts,
+                f'{ssh_user}@{source_ip}',
+                f'qperf -t 1 {target_ip} tcp_lat 2>/dev/null || echo "ERROR"'
+            ]
+            result = subprocess.run(client_cmd, capture_output=True, text=True, timeout=30)
+
+            if 'ERROR' not in result.stdout:
+                latency = parse_qperf_output(result.stdout)
+                if latency is not None:
+                    latencies.append(latency)
+
+        # Step 3: Kill qperf server on target
+        kill_cmd = [
+            'ssh', '-i', ssh_key, *ssh_opts,
+            f'{target_ssh_user}@{target_public_ip}',
+            'pkill -9 qperf 2>/dev/null || true'
+        ]
+        subprocess.run(kill_cmd, capture_output=True, timeout=10)
+
+        if latencies:
+            # Calculate statistics
+            min_ms = min(latencies)
+            max_ms = max(latencies)
+            avg_ms = sum(latencies) / len(latencies)
+
+            # Calculate standard deviation
+            variance = sum((x - avg_ms) ** 2 for x in latencies) / len(latencies)
+            mdev_ms = variance ** 0.5
+
+            return {
+                'type': 'result',
+                'cloud': cloud,
+                'region': region,
+                'source_az': source_az,
+                'target_az': target_az,
+                'source_ip': source_ip,
+                'target_ip': target_ip,
+                'min_ms': min_ms,
+                'avg_ms': avg_ms,
+                'max_ms': max_ms,
+                'mdev_ms': mdev_ms,
+                'packet_loss_pct': 0,  # TCP doesn't have packet loss in same way
+                'sample_count': len(latencies),
+                'measurement_type': 'tcp_qperf',
+                'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            }
 
         return {
             'type': 'error',
             'cloud': cloud,
             'source_az': source_az,
             'target_az': target_az,
-            'error': 'parse_failed',
-            'output': output[:500]
+            'error': 'no_valid_measurements',
+            'output': 'qperf returned no valid latency values'
         }
 
     except subprocess.TimeoutExpired:
@@ -155,7 +237,7 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override
         }
 
 
-def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, ping_count, max_workers):
+def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, tcp_duration, max_workers):
     """Run full-mesh measurements for a single region."""
     results = []
     instance_list = list(instances.values())
@@ -167,7 +249,7 @@ def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, ping_co
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(run_measurement, src, dst, ssh_key, ssh_user, ping_count): (src, dst)
+            executor.submit(run_measurement, src, dst, ssh_key, ssh_user, tcp_duration): (src, dst)
             for src, dst in pairs
         }
 
@@ -175,7 +257,7 @@ def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, ping_co
             result = future.result()
             results.append(result)
             if result['type'] == 'result':
-                print(f"    {result['source_az']} -> {result['target_az']}: {result['avg_ms']:.3f}ms")
+                print(f"    {result['source_az']} -> {result['target_az']}: {result['avg_ms']:.3f}ms (TCP)")
             elif result['type'] == 'error':
                 print(f"    {result['source_az']} -> {result['target_az']}: ERROR - {result.get('error', 'unknown')}")
 
@@ -194,31 +276,59 @@ def main():
     )
     parser.add_argument('--inventory', help='Path to inventory JSON (skips Terraform)')
     parser.add_argument('--terraform-dir', default=str(default_terraform_dir),
-                        help=f'Terraform directory (default: {default_terraform_dir})')
+                        help=f'Terraform base directory (default: {default_terraform_dir})')
+    parser.add_argument('--cloud', action='append', choices=['aws', 'azure'],
+                        help='Cloud(s) to include (can specify multiple: --cloud aws --cloud azure)')
     parser.add_argument('--output-dir', default=str(default_results_dir),
                         help='Output directory for results')
     parser.add_argument('--ssh-key', default=os.environ.get('SSH_KEY'),
-                        required='SSH_KEY' not in os.environ,
-                        help='SSH private key (required, or set SSH_KEY env var)')
+                        help='SSH private key (auto-detected from terraform if not provided)')
     parser.add_argument('--ssh-user', default=None,
                         help='SSH username override (default: auto-detect per cloud)')
-    parser.add_argument('--ping-count', type=int, default=int(os.environ.get('PING_COUNT', '100')),
-                        help='Number of ping packets')
+    parser.add_argument('--tcp-duration', type=int, default=int(os.environ.get('TCP_DURATION', '5')),
+                        help='Duration for TCP latency test in seconds')
     parser.add_argument('--max-workers', type=int, default=int(os.environ.get('PARALLEL_JOBS', '10')),
                         help='Max parallel measurements per region')
     args = parser.parse_args()
 
     print("=" * 60)
-    print("Multi-Cloud Full-Mesh Latency Measurement")
+    print("Multi-Cloud Full-Mesh TCP Latency Measurement")
     print("=" * 60)
 
-    # Get inventory
+    # Determine which clouds to use
+    clouds_to_use = args.cloud if args.cloud else ['aws', 'azure']
+
+    # Collect inventory and SSH keys from specified clouds
+    inventory = {}
+    ssh_keys = {}  # Track SSH key per cloud
+    ssh_users = {}  # Track SSH user per cloud
+
     if args.inventory:
         print(f"\nLoading inventory from {args.inventory}...")
         inventory = load_inventory(args.inventory)
     else:
         print(f"\nFetching inventory from Terraform ({args.terraform_dir})...")
-        inventory = get_terraform_inventory(args.terraform_dir)
+
+        for cloud in clouds_to_use:
+            cloud_inventory, cloud_ssh_key, cloud_ssh_user = get_terraform_inventory(args.terraform_dir, cloud)
+
+            if cloud_inventory:
+                inventory.update(cloud_inventory)
+                print(f"  {cloud.upper()}: {len(cloud_inventory)} instances")
+
+                if cloud_ssh_key:
+                    # Save SSH key to temp file
+                    key_file = Path(tempfile.gettempdir()) / f'{cloud}_latency_key'
+                    key_file.write_text(cloud_ssh_key)
+                    key_file.chmod(0o600)
+                    ssh_keys[cloud] = str(key_file)
+                    print(f"  {cloud.upper()} SSH key saved to {key_file}")
+
+                if cloud_ssh_user:
+                    ssh_users[cloud] = cloud_ssh_user
+            else:
+                print(f"  {cloud.upper()}: No instances found (terraform/{cloud} may not be deployed)")
+
         if not inventory:
             print("ERROR: No instances found. Run 'terraform apply' first.", file=sys.stderr)
             sys.exit(1)
@@ -258,12 +368,24 @@ def main():
         print(f"[{cloud.upper()}]")
         print("=" * 60)
 
+        # Determine SSH key for this cloud
+        if args.ssh_key:
+            cloud_ssh_key = args.ssh_key
+        elif cloud in ssh_keys:
+            cloud_ssh_key = ssh_keys[cloud]
+        else:
+            print(f"ERROR: No SSH key available for {cloud}. Provide --ssh-key or deploy with terraform.", file=sys.stderr)
+            continue
+
+        # Determine SSH user for this cloud
+        cloud_ssh_user = args.ssh_user or ssh_users.get(cloud)
+
         for region, instances in sorted(clouds[cloud].items()):
             print(f"\n[{cloud}/{region}] {len(instances)} AZs")
             results = run_region_measurements(
                 cloud, region, instances,
-                args.ssh_key, args.ssh_user,
-                args.ping_count, args.max_workers
+                cloud_ssh_key, cloud_ssh_user,
+                args.tcp_duration, args.max_workers
             )
             all_results.extend(results)
 
@@ -271,7 +393,8 @@ def main():
     output_data = {
         'metadata': {
             'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            'ping_count': args.ping_count,
+            'tcp_duration': args.tcp_duration,
+            'measurement_type': 'tcp_qperf',
             'total_measurements': len([r for r in all_results if r['type'] == 'result']),
             'total_errors': len([r for r in all_results if r['type'] == 'error']),
             'clouds': list(clouds.keys()),

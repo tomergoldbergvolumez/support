@@ -11,7 +11,18 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
+}
+
+# Generate SSH key for Azure VMs
+resource "tls_private_key" "azure_ssh" {
+  count     = var.enable_azure ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
 }
 
 # =============================================================================
@@ -114,102 +125,153 @@ provider "aws" {
   alias  = "us-east-1"
   region = "us-east-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "us-east-2"
   region = "us-east-2"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "us-west-1"
   region = "us-west-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "us-west-2"
   region = "us-west-2"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ca-central-1"
   region = "ca-central-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "eu-west-1"
   region = "eu-west-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "eu-west-2"
   region = "eu-west-2"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "eu-west-3"
   region = "eu-west-3"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "eu-central-1"
   region = "eu-central-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "eu-north-1"
   region = "eu-north-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ap-south-1"
   region = "ap-south-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ap-northeast-1"
   region = "ap-northeast-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ap-northeast-2"
   region = "ap-northeast-2"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ap-northeast-3"
   region = "ap-northeast-3"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ap-southeast-1"
   region = "ap-southeast-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "ap-southeast-2"
   region = "ap-southeast-2"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 provider "aws" {
   alias  = "sa-east-1"
   region = "sa-east-1"
   default_tags { tags = local.common_tags }
+  skip_credentials_validation = var.enable_aws ? false : true
+  skip_requesting_account_id  = var.enable_aws ? false : true
+  skip_metadata_api_check     = var.enable_aws ? false : true
 }
 
 # =============================================================================
@@ -417,7 +479,7 @@ module "azure_eastus" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_eastus2" {
@@ -428,7 +490,7 @@ module "azure_eastus2" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_westus2" {
@@ -439,7 +501,7 @@ module "azure_westus2" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_westus3" {
@@ -450,7 +512,7 @@ module "azure_westus3" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_centralus" {
@@ -461,7 +523,7 @@ module "azure_centralus" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_southcentralus" {
@@ -472,7 +534,7 @@ module "azure_southcentralus" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_canadacentral" {
@@ -483,7 +545,7 @@ module "azure_canadacentral" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_brazilsouth" {
@@ -494,7 +556,7 @@ module "azure_brazilsouth" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_uksouth" {
@@ -505,7 +567,7 @@ module "azure_uksouth" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_westeurope" {
@@ -516,7 +578,7 @@ module "azure_westeurope" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_northeurope" {
@@ -527,7 +589,7 @@ module "azure_northeurope" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_francecentral" {
@@ -538,7 +600,7 @@ module "azure_francecentral" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_germanywestcentral" {
@@ -549,7 +611,7 @@ module "azure_germanywestcentral" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_norwayeast" {
@@ -560,7 +622,7 @@ module "azure_norwayeast" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_swedencentral" {
@@ -571,7 +633,7 @@ module "azure_swedencentral" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_switzerlandnorth" {
@@ -582,7 +644,7 @@ module "azure_switzerlandnorth" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_uaenorth" {
@@ -593,7 +655,7 @@ module "azure_uaenorth" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_southafricanorth" {
@@ -604,7 +666,7 @@ module "azure_southafricanorth" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_qatarcentral" {
@@ -615,7 +677,7 @@ module "azure_qatarcentral" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_australiaeast" {
@@ -626,7 +688,7 @@ module "azure_australiaeast" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_southeastasia" {
@@ -637,7 +699,7 @@ module "azure_southeastasia" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_eastasia" {
@@ -648,7 +710,7 @@ module "azure_eastasia" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_japaneast" {
@@ -659,7 +721,7 @@ module "azure_japaneast" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_koreacentral" {
@@ -670,7 +732,7 @@ module "azure_koreacentral" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 module "azure_centralindia" {
@@ -681,7 +743,7 @@ module "azure_centralindia" {
   vm_size        = var.azure_vm_size
   project_name   = local.project_name
   admin_username = var.azure_admin_username
-  ssh_public_key = var.azure_ssh_public_key
+  ssh_public_key = tls_private_key.azure_ssh[0].public_key_openssh
 }
 
 # =============================================================================
@@ -758,4 +820,10 @@ output "enabled_clouds" {
     var.enable_aws ? "aws" : "",
     var.enable_azure ? "azure" : ""
   ])
+}
+
+output "azure_ssh_private_key" {
+  description = "Private SSH key for Azure VMs - save this to a file for SSH access"
+  value       = var.enable_azure ? tls_private_key.azure_ssh[0].private_key_pem : ""
+  sensitive   = true
 }

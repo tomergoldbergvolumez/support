@@ -1,6 +1,6 @@
 # Multi-Cloud Full-Mesh Inter-AZ Latency Measurement
 
-This toolkit automates the measurement of network latency between all Availability Zones in AWS and Azure regions using a full-mesh approach.
+This toolkit automates the measurement of TCP network latency between all Availability Zones in AWS and Azure regions using a full-mesh approach.
 
 ## Architecture Overview
 
@@ -27,26 +27,36 @@ This toolkit automates the measurement of network latency between all Availabili
 
 ## Components
 
-1. **Terraform Configuration** (`terraform/`) - Deploys VPC/VNet, subnets, and instances in every AZ
-2. **Orchestrator** (`scripts/orchestrate.py`) - Fetches inventory from Terraform, runs measurements, collects results
-3. **Report Generator** (`scripts/generate_report.py`) - Aggregates data into a final report
+```
+├── terraform/
+│   ├── aws/                    # AWS-only deployment (independent state)
+│   │   ├── main.tf
+│   │   └── modules/aws-region/
+│   └── azure/                  # Azure-only deployment (independent state)
+│       ├── main.tf
+│       └── modules/azure-region/
+├── scripts/
+│   ├── orchestrate.py          # Runs measurements, generates reports
+│   └── generate_report.py      # Report generation utilities
+└── results/                    # Output directory (gitignored)
+```
 
 ## Quick Start
 
 ### AWS Only
 ```bash
-# 1. Deploy infrastructure
-cd terraform
+# 1. Deploy infrastructure (SSH keys auto-generated)
+cd terraform/aws
 terraform init
-terraform apply -var="enable_aws=true" -var="aws_key_name=YOUR_KEY" -var="aws_public_key=$(cat ~/.ssh/YOUR_KEY.pub)"
+terraform apply
 
-# 2. Run measurements (automatically generates report)
-cd ../scripts
-./orchestrate.py --ssh-key ~/.ssh/YOUR_KEY.pem
+# 2. Run measurements (SSH key auto-detected from terraform)
+cd ../../scripts
+./orchestrate.py --cloud aws
 
 # 3. Clean up
-cd ../terraform
-terraform destroy -var="enable_aws=true" -var="aws_key_name=YOUR_KEY"
+cd ../terraform/aws
+terraform destroy
 ```
 
 ### Azure Only
@@ -54,18 +64,18 @@ terraform destroy -var="enable_aws=true" -var="aws_key_name=YOUR_KEY"
 # 1. Login to Azure
 az login
 
-# 2. Deploy infrastructure
-cd terraform
+# 2. Deploy infrastructure (SSH keys auto-generated)
+cd terraform/azure
 terraform init
-terraform apply -var="enable_azure=true" -var="azure_ssh_public_key=$(cat ~/.ssh/YOUR_KEY.pub)"
+terraform apply
 
-# 3. Run measurements
-cd ../scripts
-./orchestrate.py --ssh-key ~/.ssh/YOUR_KEY.pem
+# 3. Run measurements (SSH key auto-detected from terraform)
+cd ../../scripts
+./orchestrate.py --cloud azure
 
 # 4. Clean up
-cd ../terraform
-terraform destroy -var="enable_azure=true"
+cd ../terraform/azure
+terraform destroy
 ```
 
 ### Both Clouds
@@ -74,53 +84,62 @@ terraform destroy -var="enable_azure=true"
 az login
 aws sso login --profile your-profile
 
-# 2. Deploy infrastructure
-cd terraform
-terraform init
-terraform apply \
-  -var="enable_aws=true" \
-  -var="enable_azure=true" \
-  -var="aws_key_name=YOUR_KEY" \
-  -var="aws_public_key=$(cat ~/.ssh/YOUR_KEY.pub)" \
-  -var="azure_ssh_public_key=$(cat ~/.ssh/YOUR_KEY.pub)"
+# 2. Deploy both (separate state files)
+cd terraform/aws && terraform init && terraform apply
+cd ../azure && terraform init && terraform apply
 
-# 3. Run measurements
-cd ../scripts
-./orchestrate.py --ssh-key ~/.ssh/YOUR_KEY.pem
+# 3. Run measurements across both clouds
+cd ../../scripts
+./orchestrate.py --cloud aws --cloud azure
 
 # 4. Clean up
-cd ../terraform
-terraform destroy \
-  -var="enable_aws=true" \
-  -var="enable_azure=true" \
-  -var="aws_key_name=YOUR_KEY" \
-  -var="aws_public_key=$(cat ~/.ssh/YOUR_KEY.pub)" \
-  -var="azure_ssh_public_key=$(cat ~/.ssh/YOUR_KEY.pub)"
+cd ../terraform/aws && terraform destroy
+cd ../azure && terraform destroy
 ```
 
 ## Terraform Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `enable_aws` | **Yes** | `false` | Enable AWS deployment (set to `true` to deploy) |
-| `enable_azure` | **Yes** | `false` | Enable Azure deployment (set to `true` to deploy) |
-| `aws_key_name` | If AWS | - | AWS SSH key pair name |
-| `aws_public_key` | No | - | SSH public key for AWS (creates key pair if provided) |
-| `aws_instance_type` | No | `t3.micro` | AWS EC2 instance type |
-| `azure_ssh_public_key` | If Azure | - | SSH public key for Azure VMs |
-| `azure_vm_size` | No | `Standard_B2s` | Azure VM size |
-| `azure_admin_username` | No | `azureuser` | Azure VM admin username |
+### AWS (`terraform/aws/`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `instance_type` | `m5.large` | EC2 instance type (M5 series for highest availability) |
+| `project_name` | `latency-mesh` | Resource naming prefix |
+
+### Azure (`terraform/azure/`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `vm_size` | `Standard_D2s_v3` | Azure VM size (D-series for highest availability) |
+| `admin_username` | `azureuser` | VM admin username |
+| `project_name` | `latency-mesh` | Resource naming prefix |
+
+**Note:** SSH keys are automatically generated by Terraform. No need to provide your own keys.
 
 ## Orchestrator Options
 
+```bash
+./orchestrate.py [OPTIONS]
+```
+
 | Option | Env Var | Default | Description |
 |--------|---------|---------|-------------|
-| `--ssh-key` | `SSH_KEY` | *required* | Path to SSH private key file |
+| `--cloud` | - | `aws azure` | Cloud(s) to measure (can repeat: `--cloud aws --cloud azure`) |
+| `--ssh-key` | `SSH_KEY` | Auto | SSH private key (auto-detected from terraform output) |
 | `--ssh-user` | - | Auto | SSH username (auto-detects per cloud) |
-| `--ping-count` | `PING_COUNT` | `100` | Ping packets per measurement |
+| `--tcp-duration` | `TCP_DURATION` | `5` | Duration for TCP latency test (seconds) |
 | `--max-workers` | `PARALLEL_JOBS` | `10` | Max parallel SSH connections |
-| `--terraform-dir` | - | `../terraform` | Terraform directory |
+| `--terraform-dir` | - | `../terraform` | Base terraform directory |
 | `--output-dir` | - | `../results/<timestamp>` | Output directory |
+| `--inventory` | - | - | Use existing inventory JSON (skips terraform) |
+
+## Measurement Methodology
+
+- **Tool:** qperf (TCP latency measurement)
+- **Protocol:** TCP data packet round-trip time
+- **Samples:** 5 measurements per AZ pair
+- **Statistics:** min/avg/max/stddev calculated from samples
+- **Network:** Uses private IPs within each region
 
 ## Regions Covered
 
@@ -138,35 +157,24 @@ terraform destroy \
 ## Cost Estimate
 
 ### AWS
-- 2-6 t3.micro instances per region (one per supported AZ)
+- 2-6 m5.large instances per region (one per supported AZ)
 - ~50-60 instances total across 17 regions
-- Running for ~1 hour: approximately $0.50-1.00 USD total
+- Running for ~1 hour: approximately $5.00-6.00 USD total
 
 ### Azure
-- 3 Standard_B2s VMs per region (zones 1, 2, 3)
+- 3 Standard_D2s_v3 VMs per region (zones 1, 2, 3)
 - ~75 VMs total across 25 regions
-- Running for ~1 hour: approximately $3.00-4.00 USD total
+- Running for ~1 hour: approximately $7.00-8.00 USD total
 
 ### Combined
-- Total: ~$4.00-5.00 USD per hour
+- Total: ~$12.00-14.00 USD per hour
 
 ## Prerequisites
 
 - Terraform >= 1.0
 - Python 3.8+
-- SSH key pair
 - **For AWS:** AWS CLI configured with appropriate permissions
 - **For Azure:** Azure CLI installed and logged in (`az login`)
-
-## Cleanup
-
-**Important:** Always destroy the infrastructure when done to avoid ongoing charges.
-
-```bash
-cd terraform
-# Use the same enable flags as apply
-terraform destroy -var="enable_aws=true" -var="enable_azure=true" -var="aws_key_name=YOUR_KEY"
-```
 
 ## Output
 
@@ -174,3 +182,15 @@ Results are saved to `results/<timestamp>/`:
 - `inventory.json` - All deployed instances
 - `results.json` - Raw measurement data
 - `report.md` - Markdown report with statistics
+
+## Cleanup
+
+**Important:** Always destroy the infrastructure when done to avoid ongoing charges.
+
+```bash
+# AWS
+cd terraform/aws && terraform destroy
+
+# Azure
+cd terraform/azure && terraform destroy
+```
