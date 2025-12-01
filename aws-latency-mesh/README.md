@@ -39,14 +39,13 @@ cd terraform
 terraform init
 terraform apply -var="key_name=YOUR_KEY_PAIR_NAME"
 
-# 2. Run measurements
+# 2. Run measurements (automatically generates report)
 cd ../scripts
 ./orchestrate.py --ssh-key ~/.ssh/YOUR_KEY.pem
 
-# 3. Generate report
-python3 generate_report.py results/<timestamp>/results.json
+# Results saved to results/<timestamp>/results.json and report.md
 
-# 4. Clean up (IMPORTANT: destroy infrastructure when done!)
+# 3. Clean up (IMPORTANT: destroy infrastructure when done!)
 cd ../terraform
 terraform destroy -var="key_name=YOUR_KEY_PAIR_NAME"
 ```
@@ -55,9 +54,16 @@ terraform destroy -var="key_name=YOUR_KEY_PAIR_NAME"
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `key_name` | **Yes** | - | AWS EC2 key pair name (must exist in the region) |
+| `key_name` | **Yes** | - | AWS EC2 key pair name |
+| `public_key` | No | - | SSH public key content (if provided, creates key pair in each region) |
 | `instance_type` | No | `t3.micro` | EC2 instance type |
-| `regions` | No | 27 regions | List of AWS regions to deploy to |
+
+**Key Pair Options:**
+- If you have an existing key pair in all 17 regions, just provide `key_name`
+- If you want Terraform to create the key pair, provide both `key_name` and `public_key`:
+  ```bash
+  terraform apply -var="key_name=my-key" -var="public_key=$(cat ~/.ssh/my-key.pub)"
+  ```
 
 Example with custom values:
 ```bash
@@ -99,13 +105,21 @@ terraform destroy -var="key_name=YOUR_KEY_PAIR_NAME"
 
 ## Cost Estimate
 
-- ~6 t3.micro instances per region (one per AZ)
-- Running for ~1 hour: approximately $0.10-0.50 USD per region
+- 2-6 t3.micro instances per region (one per supported AZ, varies by region)
+- ~50-60 instances total across all 17 regions
+- Running for ~1 hour: approximately $0.50-1.00 USD total
 - Data transfer: minimal (ping packets only)
+
+## Regions Covered
+
+The tool deploys to 17 AWS regions:
+- **Americas:** us-east-1, us-east-2, us-west-1, us-west-2, ca-central-1, sa-east-1
+- **Europe:** eu-west-1, eu-west-2, eu-west-3, eu-central-1, eu-north-1
+- **Asia Pacific:** ap-south-1, ap-northeast-1, ap-northeast-2, ap-northeast-3, ap-southeast-1, ap-southeast-2
 
 ## Prerequisites
 
 - AWS CLI configured with appropriate permissions
 - Terraform >= 1.0
 - Python 3.8+
-- EC2 key pair created in AWS (must exist in all target regions)
+- SSH key pair (either existing in all regions, or provide public key for Terraform to create)
