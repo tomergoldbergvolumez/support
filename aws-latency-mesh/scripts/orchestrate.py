@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Orchestrates full-mesh latency measurements across AWS regions.
+Orchestrates full-mesh latency measurements across AWS and Azure regions.
 
 Usage:
     ./orchestrate.py                          # Uses Terraform in ../terraform
@@ -9,7 +9,6 @@ Usage:
 
 Environment variables:
     SSH_KEY       - Path to SSH private key (required if --ssh-key not provided)
-    SSH_USER      - SSH username (default: ec2-user)
     PING_COUNT    - Number of ping packets per measurement (default: 100)
     PARALLEL_JOBS - Max parallel SSH connections (default: 10)
 """
@@ -22,6 +21,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 import argparse
+
+# Default SSH users per cloud
+DEFAULT_SSH_USERS = {
+    'aws': 'ec2-user',
+    'azure': 'azureuser'
+}
 
 
 def get_terraform_inventory(terraform_dir):
@@ -44,22 +49,35 @@ def load_inventory(inventory_file):
         return json.load(f)
 
 
-def run_measurement(source_instance, target_instance, ssh_key, ssh_user, ping_count):
+def get_ssh_user(instance, override_user=None):
+    """Get SSH user for an instance based on cloud type."""
+    if override_user:
+        return override_user
+    cloud = instance.get('cloud', 'aws')
+    return DEFAULT_SSH_USERS.get(cloud, 'ec2-user')
+
+
+def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override, ping_count):
     """Run latency measurement from source to target instance."""
     source_ip = source_instance['public_ip']
     target_ip = target_instance['private_ip']
     source_az = source_instance['az_id']
     target_az = target_instance['az_id']
     region = source_instance['region']
+    cloud = source_instance.get('cloud', 'aws')
 
     # Skip same-AZ measurements
     if source_az == target_az:
         return {
             'type': 'skip',
+            'cloud': cloud,
             'source_az': source_az,
             'target_az': target_az,
             'reason': 'same_az'
         }
+
+    # Get SSH user for this instance
+    ssh_user = get_ssh_user(source_instance, ssh_user_override)
 
     # Build SSH command
     ssh_cmd = [
@@ -95,6 +113,7 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user, ping_co
 
                     return {
                         'type': 'result',
+                        'cloud': cloud,
                         'region': region,
                         'source_az': source_az,
                         'target_az': target_az,
@@ -111,6 +130,7 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user, ping_co
 
         return {
             'type': 'error',
+            'cloud': cloud,
             'source_az': source_az,
             'target_az': target_az,
             'error': 'parse_failed',
@@ -120,6 +140,7 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user, ping_co
     except subprocess.TimeoutExpired:
         return {
             'type': 'error',
+            'cloud': cloud,
             'source_az': source_az,
             'target_az': target_az,
             'error': 'timeout'
@@ -127,13 +148,14 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user, ping_co
     except Exception as e:
         return {
             'type': 'error',
+            'cloud': cloud,
             'source_az': source_az,
             'target_az': target_az,
             'error': str(e)
         }
 
 
-def run_region_measurements(region, instances, ssh_key, ssh_user, ping_count, max_workers):
+def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, ping_count, max_workers):
     """Run full-mesh measurements for a single region."""
     results = []
     instance_list = list(instances.values())
@@ -141,7 +163,7 @@ def run_region_measurements(region, instances, ssh_key, ssh_user, ping_count, ma
     # Generate all pairs (full mesh, bidirectional)
     pairs = [(a, b) for a in instance_list for b in instance_list if a['az_id'] != b['az_id']]
 
-    print(f"  Running {len(pairs)} measurements in {region}...")
+    print(f"  Running {len(pairs)} measurements in {cloud}/{region}...")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
@@ -166,7 +188,7 @@ def main():
     default_results_dir = script_dir.parent / 'results' / datetime.now().strftime('%Y%m%d_%H%M%S')
 
     parser = argparse.ArgumentParser(
-        description='Run full-mesh latency measurements across AWS AZs',
+        description='Run full-mesh latency measurements across AWS and Azure AZs',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -178,8 +200,8 @@ def main():
     parser.add_argument('--ssh-key', default=os.environ.get('SSH_KEY'),
                         required='SSH_KEY' not in os.environ,
                         help='SSH private key (required, or set SSH_KEY env var)')
-    parser.add_argument('--ssh-user', default=os.environ.get('SSH_USER', 'ec2-user'),
-                        help='SSH username')
+    parser.add_argument('--ssh-user', default=None,
+                        help='SSH username override (default: auto-detect per cloud)')
     parser.add_argument('--ping-count', type=int, default=int(os.environ.get('PING_COUNT', '100')),
                         help='Number of ping packets')
     parser.add_argument('--max-workers', type=int, default=int(os.environ.get('PARALLEL_JOBS', '10')),
@@ -187,7 +209,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("AWS Full-Mesh Latency Measurement")
+    print("Multi-Cloud Full-Mesh Latency Measurement")
     print("=" * 60)
 
     # Get inventory
@@ -210,26 +232,40 @@ def main():
         json.dump(inventory, f, indent=2)
     print(f"Inventory saved to {inventory_file}")
 
-    # Group instances by region
-    regions = {}
+    # Group instances by cloud, then by region
+    clouds = {}
     for az_id, instance in inventory.items():
+        cloud = instance.get('cloud', 'aws')
         region = instance['region']
-        if region not in regions:
-            regions[region] = {}
-        regions[region][az_id] = instance
+        if cloud not in clouds:
+            clouds[cloud] = {}
+        if region not in clouds[cloud]:
+            clouds[cloud][region] = {}
+        clouds[cloud][region][az_id] = instance
 
-    print(f"Found {len(regions)} regions with {len(inventory)} total instances")
+    # Count totals
+    total_instances = len(inventory)
+    total_regions = sum(len(regions) for regions in clouds.values())
+    print(f"Found {len(clouds)} clouds, {total_regions} regions, {total_instances} total instances")
 
-    # Run measurements for each region
+    for cloud, regions in sorted(clouds.items()):
+        print(f"  {cloud.upper()}: {len(regions)} regions, {sum(len(r) for r in regions.values())} instances")
+
+    # Run measurements for each cloud/region
     all_results = []
-    for region, instances in sorted(regions.items()):
-        print(f"\n[{region}] {len(instances)} AZs")
-        results = run_region_measurements(
-            region, instances,
-            args.ssh_key, args.ssh_user,
-            args.ping_count, args.max_workers
-        )
-        all_results.extend(results)
+    for cloud in sorted(clouds.keys()):
+        print(f"\n{'='*60}")
+        print(f"[{cloud.upper()}]")
+        print("=" * 60)
+
+        for region, instances in sorted(clouds[cloud].items()):
+            print(f"\n[{cloud}/{region}] {len(instances)} AZs")
+            results = run_region_measurements(
+                cloud, region, instances,
+                args.ssh_key, args.ssh_user,
+                args.ping_count, args.max_workers
+            )
+            all_results.extend(results)
 
     # Save results
     output_data = {
@@ -238,7 +274,8 @@ def main():
             'ping_count': args.ping_count,
             'total_measurements': len([r for r in all_results if r['type'] == 'result']),
             'total_errors': len([r for r in all_results if r['type'] == 'error']),
-            'regions': list(regions.keys())
+            'clouds': list(clouds.keys()),
+            'regions': {cloud: list(regions.keys()) for cloud, regions in clouds.items()}
         },
         'results': all_results
     }

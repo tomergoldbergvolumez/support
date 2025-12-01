@@ -1,5 +1,5 @@
-# modules/region-mesh/main.tf
-# Deploys one EC2 instance per AZ in a region for latency measurement
+# modules/aws-region/main.tf
+# Deploys one EC2 instance per AZ in an AWS region for latency measurement
 
 terraform {
   required_providers {
@@ -281,6 +281,7 @@ output "instances" {
       az_id       = az_id
       az_name     = instance.availability_zone
       region      = data.aws_region.current.name
+      cloud       = "aws"
     }
   }
 }
