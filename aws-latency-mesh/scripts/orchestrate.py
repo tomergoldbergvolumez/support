@@ -21,6 +21,7 @@ import sys
 import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import combinations
 from datetime import datetime, timezone
 from pathlib import Path
 import argparse
@@ -242,8 +243,9 @@ def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, tcp_dur
     results = []
     instance_list = list(instances.values())
 
-    # Generate all pairs (full mesh, bidirectional)
-    pairs = [(a, b) for a in instance_list for b in instance_list if a['az_id'] != b['az_id']]
+    # Generate unique AZ pairs (combinations, not permutations)
+    # TCP latency is symmetric (round-trip), so we only measure each pair once
+    pairs = list(combinations(instance_list, 2))
 
     print(f"  Running {len(pairs)} measurements in {cloud}/{region}...")
 

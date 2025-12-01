@@ -186,7 +186,7 @@ def generate_report(results_data, output_file, verbose=False, inventory=None):
     lines.append("- Azure: Standard_B2s VMs")
     lines.append("- One instance deployed per availability zone")
     lines.append("- Measurements use private IPs within the same region")
-    lines.append("- Full mesh: every AZ pair measured bidirectionally")
+    lines.append("- Full mesh: every unique AZ pair measured (TCP round-trip)")
     lines.append("")
 
     # Write output
