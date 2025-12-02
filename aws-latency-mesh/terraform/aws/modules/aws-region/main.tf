@@ -217,7 +217,17 @@ locals {
   user_data = <<-EOF
     #!/bin/bash
     yum update -y
-    yum install -y iperf3 qperf bind-utils jq
+    yum install -y iperf3 bind-utils jq gcc make rdma-core-devel libibverbs-devel git autoconf automake libtool perl-diagnostics
+
+    # Build qperf from source (not available in AL2023 repos)
+    cd /tmp
+    git clone https://github.com/linux-rdma/qperf.git
+    cd qperf
+    ./autogen.sh
+    ./configure
+    make
+    make install
+    ln -sf /usr/local/bin/qperf /usr/bin/qperf
 
     # Create measurement script
     cat > /home/ec2-user/measure_latency.sh << 'SCRIPT'

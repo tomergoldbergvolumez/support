@@ -114,11 +114,71 @@ def parse_qperf_output(output):
     return None
 
 
+def start_qperf_servers(instances, ssh_key, ssh_user_override):
+    """Start qperf servers on all instances in parallel."""
+    ssh_opts = [
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'LogLevel=ERROR'
+    ]
+
+    def start_server(instance):
+        ssh_user = get_ssh_user(instance, ssh_user_override)
+        public_ip = instance['public_ip']
+        try:
+            # Kill any existing qperf and start fresh server
+            cmd = [
+                'ssh', '-i', ssh_key, *ssh_opts,
+                f'{ssh_user}@{public_ip}',
+                'pkill -9 qperf 2>/dev/null; nohup qperf > /dev/null 2>&1 &'
+            ]
+            subprocess.run(cmd, capture_output=True, timeout=15)
+            return True
+        except Exception:
+            return False
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        list(executor.map(start_server, instances))
+
+    # Give servers time to start
+    import time
+    time.sleep(2)
+
+
+def stop_qperf_servers(instances, ssh_key, ssh_user_override):
+    """Stop qperf servers on all instances."""
+    ssh_opts = [
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'LogLevel=ERROR'
+    ]
+
+    def stop_server(instance):
+        ssh_user = get_ssh_user(instance, ssh_user_override)
+        public_ip = instance['public_ip']
+        try:
+            cmd = [
+                'ssh', '-i', ssh_key, *ssh_opts,
+                f'{ssh_user}@{public_ip}',
+                'pkill -9 qperf 2>/dev/null || true'
+            ]
+            subprocess.run(cmd, capture_output=True, timeout=10)
+        except Exception:
+            pass
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        list(executor.map(stop_server, instances))
+
+
 def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override, tcp_duration):
-    """Run TCP latency measurement from source to target instance using qperf."""
+    """Run TCP latency measurement from source to target instance using qperf.
+
+    Note: qperf servers should already be running on all instances before calling this.
+    """
     source_ip = source_instance['public_ip']
     target_ip = target_instance['private_ip']
-    target_public_ip = target_instance['public_ip']
     source_az = source_instance['az_id']
     target_az = target_instance['az_id']
     region = source_instance['region']
@@ -136,7 +196,6 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override
 
     # Get SSH user for this instance
     ssh_user = get_ssh_user(source_instance, ssh_user_override)
-    target_ssh_user = get_ssh_user(target_instance, ssh_user_override)
 
     ssh_opts = [
         '-o', 'StrictHostKeyChecking=no',
@@ -146,19 +205,7 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override
     ]
 
     try:
-        # Step 1: Start qperf server on target (in background, with timeout)
-        server_cmd = [
-            'ssh', '-i', ssh_key, *ssh_opts,
-            f'{target_ssh_user}@{target_public_ip}',
-            f'pkill -9 qperf 2>/dev/null; timeout {tcp_duration + 30} qperf &'
-        ]
-        subprocess.run(server_cmd, capture_output=True, timeout=15)
-
-        # Give server time to start
-        import time
-        time.sleep(1)
-
-        # Step 2: Run multiple qperf measurements from source to get statistics
+        # Run multiple qperf measurements from source to get statistics
         latencies = []
         iterations = 5  # Run 5 measurements for statistics
 
@@ -174,14 +221,6 @@ def run_measurement(source_instance, target_instance, ssh_key, ssh_user_override
                 latency = parse_qperf_output(result.stdout)
                 if latency is not None:
                     latencies.append(latency)
-
-        # Step 3: Kill qperf server on target
-        kill_cmd = [
-            'ssh', '-i', ssh_key, *ssh_opts,
-            f'{target_ssh_user}@{target_public_ip}',
-            'pkill -9 qperf 2>/dev/null || true'
-        ]
-        subprocess.run(kill_cmd, capture_output=True, timeout=10)
 
         if latencies:
             # Calculate statistics
@@ -247,21 +286,28 @@ def run_region_measurements(cloud, region, instances, ssh_key, ssh_user, tcp_dur
     # TCP latency is symmetric (round-trip), so we only measure each pair once
     pairs = list(combinations(instance_list, 2))
 
+    print(f"  Starting qperf servers on {len(instance_list)} nodes...")
+    start_qperf_servers(instance_list, ssh_key, ssh_user)
+
     print(f"  Running {len(pairs)} measurements in {cloud}/{region}...")
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(run_measurement, src, dst, ssh_key, ssh_user, tcp_duration): (src, dst)
-            for src, dst in pairs
-        }
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(run_measurement, src, dst, ssh_key, ssh_user, tcp_duration): (src, dst)
+                for src, dst in pairs
+            }
 
-        for future in as_completed(futures):
-            result = future.result()
-            results.append(result)
-            if result['type'] == 'result':
-                print(f"    {result['source_az']} -> {result['target_az']}: {result['avg_ms']:.3f}ms (TCP)")
-            elif result['type'] == 'error':
-                print(f"    {result['source_az']} -> {result['target_az']}: ERROR - {result.get('error', 'unknown')}")
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                if result['type'] == 'result':
+                    print(f"    {result['source_az']} -> {result['target_az']}: {result['avg_ms']:.3f}ms (TCP)")
+                elif result['type'] == 'error':
+                    print(f"    {result['source_az']} -> {result['target_az']}: ERROR - {result.get('error', 'unknown')}")
+    finally:
+        print(f"  Stopping qperf servers...")
+        stop_qperf_servers(instance_list, ssh_key, ssh_user)
 
     return results
 
