@@ -36,7 +36,7 @@ locals {
 
 variable "instance_type" {
   type    = string
-  default = "t3.micro"
+  default = "c5n.large"  # Network-optimized instance with up to 25 Gbps network bandwidth
 }
 
 variable "project_name" {
