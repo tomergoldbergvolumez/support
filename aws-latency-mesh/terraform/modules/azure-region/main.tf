@@ -21,9 +21,8 @@ variable "zones" {
 }
 
 variable "vm_size" {
-  description = "Azure VM size (must support accelerated networking)"
+  description = "Azure VM size"
   type        = string
-  default     = "Standard_D2s_v3"  # D-series supports accelerated networking
 }
 
 variable "project_name" {

@@ -23,7 +23,6 @@ variable "zones" {
 variable "vm_size" {
   description = "Azure VM size"
   type        = string
-  default     = "Standard_D2s_v3"  # D-series has highest availability across regions
 }
 
 variable "project_name" {
@@ -161,9 +160,10 @@ resource "azurerm_public_ip" "latency_test" {
 resource "azurerm_network_interface" "latency_test" {
   for_each = toset(var.zones)
 
-  name                = "${var.project_name}-nic-zone${each.key}"
-  location            = azurerm_resource_group.latency_test.location
-  resource_group_name = azurerm_resource_group.latency_test.name
+  name                           = "${var.project_name}-nic-zone${each.key}"
+  location                       = azurerm_resource_group.latency_test.location
+  resource_group_name            = azurerm_resource_group.latency_test.name
+  accelerated_networking_enabled = true  # Reduces latency by bypassing host networking stack
 
   ip_configuration {
     name                          = "internal"

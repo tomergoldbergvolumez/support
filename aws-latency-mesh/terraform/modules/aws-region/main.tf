@@ -35,8 +35,8 @@ locals {
 }
 
 variable "instance_type" {
-  type    = string
-  default = "c5n.large"  # Network-optimized instance with up to 25 Gbps network bandwidth
+  description = "EC2 instance type"
+  type        = string
 }
 
 variable "project_name" {

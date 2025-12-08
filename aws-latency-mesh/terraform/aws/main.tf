@@ -30,7 +30,7 @@ resource "tls_private_key" "ssh_key" {
 variable "instance_type" {
   description = "AWS EC2 instance type"
   type        = string
-  default     = "m5.large"  # M5 series has highest availability across regions/AZs
+  default     = "c5n.large"  # Network-optimized with up to 25 Gbps bandwidth for lower latency
 }
 
 variable "project_name" {

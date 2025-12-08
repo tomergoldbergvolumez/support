@@ -23,7 +23,6 @@ variable "public_key" {
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
-  default     = "m5.large"  # M5 series has highest availability across regions/AZs
 }
 
 variable "project_name" {
